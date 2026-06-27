@@ -1,0 +1,60 @@
+# STG content-opportunity monitor — configuration
+# Edit freely. Everything here is read fresh on each run.
+
+# --- Subreddits to monitor (B2B targets; STG has no history here yet) ---
+# r/sysadminjobs from the original brief was dropped (inactive); swapped for
+# r/managedprint, which sits squarely in STG's domain.
+subreddits:
+  - sysadmin
+  - msp
+  - printers
+  - smallbusiness
+  - k12sysadmin
+  - managedprint
+
+# --- Keyword themes ---
+# Used to run targeted searches per subreddit in addition to the new-post feed.
+# The model still scores relevance; keywords only widen ingestion.
+keywords:
+  - managed print
+  - MPS
+  - copier lease
+  - MFP
+  - multifunction printer
+  - print fleet
+  - document workflow
+  - document scanning
+  - DocuWare
+  - PaperCut
+  - print security
+  - "printer won't"
+  - toner cost
+  - lease ending
+  - public sector procurement
+  - CMAS
+  - NASPO
+
+# --- Scoring / drafting behavior ---
+# Only candidates scoring >= relevance_threshold get a drafted reply.
+relevance_threshold: 60
+# Hard cap on drafts produced per run (cost control). Scoring still runs on all.
+max_drafts_per_run: 10
+
+# --- Ingestion limits (PRAW; keep modest to respect Reddit rate limits) ---
+max_posts_per_subreddit: 25
+max_comments_per_post: 5
+include_comments: true
+# Time window for keyword searches: hour | day | week | month | year | all
+keyword_search_time_filter: week
+max_keyword_results_per_query: 10
+
+# --- Models ---
+# Cheap model scores relevance on every candidate; the stronger model only
+# drafts for candidates that clear the threshold. Both are swappable.
+models:
+  scoring: claude-haiku-4-5
+  drafting: claude-opus-4-8
+
+# --- Reddit client ---
+reddit:
+  user_agent: "stg-content-monitor/1.0 (read-only; by u/CHANGE_ME)"
