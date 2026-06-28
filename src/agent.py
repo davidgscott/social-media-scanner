@@ -1,23 +1,22 @@
-"""Scoring + drafting brain (Claude Agent SDK).
+"""Scoring + drafting brain (Anthropic Python SDK — pure Python, no Node).
 
 Two passes, two models, to keep cost down and reliability up:
 
   1. score()  — cheap model (Haiku) rates relevance 0-100 + self-promo risk.
-                Runs on every candidate. Returns structured JSON only.
+                Runs on every candidate. Returns structured JSON.
   2. draft()  — stronger model (Opus) writes the reply in David's voice, but
                 ONLY for candidates that clear the threshold. Loads
-                voice-profile.md fresh as system-prompt context and reads the
-                project CLAUDE.md via setting_sources=["project"].
+                voice-profile.md fresh each call so edits take effect with no
+                code change.
 
-The agent has NO tools (allowed_tools=[]) — it cannot touch Reddit or the
-filesystem. Every output is a draft for human review.
+These are plain single-shot model calls (no tools, no agent loop) — exactly the
+shape of the scoring/drafting work — so we use the standard Anthropic SDK
+(`anthropic`) rather than the Agent SDK. That keeps the deployment Python-only
+(no Node / CLI runtime). Per-call cost is computed from token usage so the run
+report still tracks total_cost_usd.
 
-API surface used (claude-agent-sdk):
-  query(prompt=..., options=ClaudeAgentOptions(...)) -> async iterator
-  ClaudeAgentOptions(system_prompt, model, cwd, setting_sources, allowed_tools,
-                     permission_mode, max_turns)
-  ResultMessage.result          -> final text
-  ResultMessage.total_cost_usd  -> per-call cost (summed into the run total)
+The agent has no Reddit-write path anywhere. Every output is a draft for human
+review.
 """
 
 from __future__ import annotations
@@ -25,10 +24,23 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+from anthropic import Anthropic
 
 from config import Config
 from ingest_reddit import Candidate
+
+# --- Pricing (USD per 1M tokens: input, output) ------------------------------
+# Used only to report total_cost_usd in the run summary. Update if prices change.
+_PRICES: dict[str, tuple[float, float]] = {
+    "claude-haiku-4-5": (1.0, 5.0),
+    "claude-sonnet-4-6": (3.0, 15.0),
+    "claude-opus-4-8": (5.0, 25.0),
+    "claude-opus-4-7": (5.0, 25.0),
+    "claude-opus-4-6": (5.0, 25.0),
+    "claude-fable-5": (10.0, 50.0),
+}
+_DEFAULT_PRICE = (5.0, 25.0)  # conservative fallback for an unknown model id
+
 
 # --- Static prompt fragments -------------------------------------------------
 
@@ -49,8 +61,8 @@ troubleshooting question, a copier lease decision, a document-workflow problem,
 or a public-sector procurement question IS relevant. General IT, hardware
 unrelated to print, or off-topic chatter is NOT.
 
-Return ONLY valid JSON, no preamble, no markdown fences:
-{{"relevance_score": <0-100 integer>,
+Output ONLY a single JSON object, nothing else, no preamble, no markdown fences:
+{{"relevance_score": <integer 0-100>,
   "rationale": "<one sentence: why this is or isn't a fit for STG's expertise>",
   "selfpromo_risk": "low" | "medium" | "high"}}
 
@@ -60,7 +72,7 @@ selfpromo_risk: "high" if the only useful answer would name a vendor or service;
 _DRAFTING_INSTRUCTIONS = """You are drafting a Reddit reply in David Scott's
 voice for a HUMAN to review and post manually. You cannot post anything.
 
-Follow the voice profile above and the project's CLAUDE.md guardrails EXACTLY:
+Follow the voice profile above EXACTLY:
 - Lead with the genuinely useful, lived-in thing. The helpfulness is the
   positioning.
 - First person, plain, declarative. Short, period-chopped sentences. Reframe
@@ -68,13 +80,14 @@ Follow the voice profile above and the project's CLAUDE.md guardrails EXACTLY:
 - No em-dashes, no hashtags, no corporate filler, no hype/FOMO register.
 - NEVER mention STG, Scott Technology Group, its products, its site, or any
   link — unless the thread explicitly asks for a vendor/recommendation (and if
-  it does, flag that in notes_for_reviewer and treat selfpromo_risk as high).
+  it does, say so in notes_for_reviewer and treat the item as high self-promo
+  risk).
 - If you do not have an honest, useful thing to say, return an empty draft.
   Silence is a valid, correct output.
 
-Return ONLY valid JSON, no preamble, no markdown fences:
+Output ONLY a single JSON object, nothing else, no preamble, no markdown fences:
 {"draft_comment": "<the reply in David's voice, or empty string>",
- "notes_for_reviewer": "<anything the human should know before posting, optional>"}"""
+ "notes_for_reviewer": "<anything the human should know before posting, or empty string>"}"""
 
 
 @dataclass
@@ -87,13 +100,39 @@ class Evaluation:
     cost_usd: float
 
 
+# --- Anthropic client (lazy, reused across calls) ----------------------------
+
+_client: Anthropic | None = None
+
+
+def _get_client(cfg: Config) -> Anthropic:
+    global _client
+    if _client is None:
+        _client = Anthropic(api_key=cfg.anthropic_api_key)
+    return _client
+
+
+def _cost(model: str, usage) -> float:
+    price_in, price_out = _PRICES.get(model, _DEFAULT_PRICE)
+    it = getattr(usage, "input_tokens", 0) or 0
+    ot = getattr(usage, "output_tokens", 0) or 0
+    cr = getattr(usage, "cache_read_input_tokens", 0) or 0
+    cw = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    return (
+        it * price_in
+        + ot * price_out
+        + cr * price_in * 0.1
+        + cw * price_in * 1.25
+    ) / 1_000_000
+
+
 # --- JSON helpers ------------------------------------------------------------
 
 def _extract_json(text: str) -> dict:
     """Best-effort parse of a JSON object from model output.
 
-    Tolerates accidental ```json fences or leading/trailing prose by grabbing
-    the outermost {...} span.
+    Tolerates accidental ```json fences or stray prose by grabbing the
+    outermost {...} span.
     """
     text = (text or "").strip()
     if not text:
@@ -121,59 +160,53 @@ def _candidate_block(candidate: Candidate) -> str:
     )
 
 
-async def _run_agent(
-    *,
-    prompt: str,
-    system_prompt: str,
-    model: str,
-    cfg: Config,
-    load_project_settings: bool,
+def _run_model(
+    *, cfg: Config, model: str, system_prompt: str, prompt: str, max_tokens: int
 ) -> tuple[str, float]:
-    """Run one single-turn, tool-free agent call. Returns (text, cost_usd)."""
-    options = ClaudeAgentOptions(
-        system_prompt=system_prompt,
+    """One single-shot, tool-free model call. Returns (text, cost_usd)."""
+    client = _get_client(cfg)
+    resp = client.messages.create(
         model=model,
-        cwd=str(cfg.root),
-        # Load CLAUDE.md (project memory) for the drafting pass per the brief.
-        setting_sources=["project"] if load_project_settings else [],
-        allowed_tools=[],          # no tools: cannot post, cannot touch the FS
-        permission_mode="bypassPermissions",  # headless; nothing to approve anyway
-        max_turns=1,
+        max_tokens=max_tokens,
+        system=system_prompt,
+        messages=[{"role": "user", "content": prompt}],
     )
+    cost = _cost(model, resp.usage)
 
-    result_text = ""
-    cost = 0.0
-    async for message in query(prompt=prompt, options=options):
-        if isinstance(message, ResultMessage):
-            cost = message.total_cost_usd or 0.0
-            if message.result:
-                result_text = message.result
-    return result_text, cost
+    if resp.stop_reason == "refusal":
+        return "", cost
+
+    text = ""
+    for block in resp.content:
+        if getattr(block, "type", None) == "text":
+            text = block.text
+            break
+    return text, cost
 
 
 # --- Public API --------------------------------------------------------------
 
-async def score(candidate: Candidate, cfg: Config) -> tuple[dict, float]:
+def score(candidate: Candidate, cfg: Config) -> tuple[dict, float]:
     """Cheap relevance pass. Returns (parsed_json, cost_usd)."""
     prompt = (
         "Score this Reddit item for relevance to STG's domains.\n\n"
         + _candidate_block(candidate)
     )
-    text, cost = await _run_agent(
-        prompt=prompt,
-        system_prompt=_SCORING_SYSTEM,
-        model=cfg.scoring_model,
+    text, cost = _run_model(
         cfg=cfg,
-        load_project_settings=False,
+        model=cfg.scoring_model,
+        system_prompt=_SCORING_SYSTEM,
+        prompt=prompt,
+        max_tokens=512,
     )
     return _extract_json(text), cost
 
 
-async def draft(candidate: Candidate, cfg: Config) -> tuple[dict, float]:
+def draft(candidate: Candidate, cfg: Config) -> tuple[dict, float]:
     """Voice-drafting pass. Returns (parsed_json, cost_usd).
 
-    Loads voice-profile.md fresh each call so edits take effect without a code
-    change, and pulls CLAUDE.md via project settings.
+    Loads voice-profile.md fresh each call so edits take effect with no code
+    change.
     """
     voice_profile = cfg.voice_profile_path.read_text(encoding="utf-8")
     system_prompt = (
@@ -186,21 +219,29 @@ async def draft(candidate: Candidate, cfg: Config) -> tuple[dict, float]:
         "Draft a reply in David's voice for this Reddit item, following the "
         "voice profile and guardrails.\n\n" + _candidate_block(candidate)
     )
-    text, cost = await _run_agent(
-        prompt=prompt,
-        system_prompt=system_prompt,
-        model=cfg.drafting_model,
+    text, cost = _run_model(
         cfg=cfg,
-        load_project_settings=True,
+        model=cfg.drafting_model,
+        system_prompt=system_prompt,
+        prompt=prompt,
+        max_tokens=1024,
     )
     return _extract_json(text), cost
 
 
-async def evaluate(candidate: Candidate, cfg: Config) -> Evaluation:
-    """Full pipeline for one candidate: score, then draft if it clears the bar."""
-    score_json, score_cost = await score(candidate, cfg)
+def _clamp_score(value) -> int:
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(100, n))
 
-    relevance = int(score_json.get("relevance_score", 0) or 0)
+
+def evaluate(candidate: Candidate, cfg: Config) -> Evaluation:
+    """Full pipeline for one candidate: score, then draft if it clears the bar."""
+    score_json, score_cost = score(candidate, cfg)
+
+    relevance = _clamp_score(score_json.get("relevance_score", 0))
     rationale = str(score_json.get("rationale", "")).strip()
     selfpromo_risk = str(score_json.get("selfpromo_risk", "low")).strip() or "low"
 
@@ -209,7 +250,7 @@ async def evaluate(candidate: Candidate, cfg: Config) -> Evaluation:
     draft_cost = 0.0
 
     if relevance >= cfg.relevance_threshold:
-        draft_json, draft_cost = await draft(candidate, cfg)
+        draft_json, draft_cost = draft(candidate, cfg)
         draft_comment = str(draft_json.get("draft_comment", "")).strip()
         notes = str(draft_json.get("notes_for_reviewer", "")).strip()
 

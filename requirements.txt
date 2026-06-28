@@ -1,8 +1,8 @@
 # Core
-claude-agent-sdk>=0.1.0   # Claude Agent SDK (Python 3.10+)
-praw>=7.7.0               # Reddit API client (read-only here)
-python-dotenv>=1.0.0      # loads .env
-PyYAML>=6.0               # config.yaml
+anthropic>=0.40.0        # Claude API (pure Python; no Node/CLI runtime)
+praw>=7.7.0              # Reddit API client (read-only here)
+python-dotenv>=1.0.0     # loads .env
+PyYAML>=6.0              # config.yaml
 
 # Optional: only needed if you switch the store to Supabase. Safe to leave
 # installed; it is imported lazily and only when SUPABASE_URL/KEY are set.

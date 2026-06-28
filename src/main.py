@@ -9,13 +9,12 @@ Run:  python src/main.py
 
 from __future__ import annotations
 
-import asyncio
 from datetime import datetime, timezone
 
-from config import Config, load_config
-from store import Store, open_store
 import agent
+from config import Config, load_config
 from ingest_reddit import Candidate, fetch_candidates
+from store import Store, open_store
 
 
 def _log_line(cfg: Config, message: str) -> None:
@@ -26,9 +25,7 @@ def _log_line(cfg: Config, message: str) -> None:
         fh.write(line + "\n")
 
 
-async def _process(
-    cfg: Config, store: Store, candidates: list[Candidate]
-) -> dict:
+def _process(cfg: Config, store: Store, candidates: list[Candidate]) -> dict:
     seen = 0
     scored = 0
     kept = 0
@@ -38,7 +35,7 @@ async def _process(
     for candidate in candidates:
         seen += 1
         try:
-            evaluation = await agent.evaluate(candidate, cfg)
+            evaluation = agent.evaluate(candidate, cfg)
         except Exception as exc:
             print(f"  [warn] evaluate failed for {candidate.source_id}: {exc}")
             # Don't mark seen — let a future run retry this candidate.
@@ -49,9 +46,8 @@ async def _process(
 
         cleared = evaluation.relevance_score >= cfg.relevance_threshold
         has_draft = bool(evaluation.draft_comment)
-
-        # Respect the per-run draft cap: once hit, we stop drafting but keep
-        # marking items seen so we don't re-pay scoring on them next run.
+        # Respect the per-run draft cap: once hit, stop drafting but keep marking
+        # items seen so we don't re-pay scoring on them next run.
         over_cap = drafts >= cfg.max_drafts_per_run
 
         if cleared and has_draft and not over_cap:
@@ -88,7 +84,7 @@ async def _process(
     }
 
 
-async def run() -> None:
+def run() -> None:
     cfg = load_config()
     store = open_store(cfg)
     backend = "Supabase" if cfg.use_supabase else f"SQLite ({cfg.sqlite_path.name})"
@@ -97,7 +93,7 @@ async def run() -> None:
     try:
         candidates = fetch_candidates(cfg, store)
         print(f"  ingested {len(candidates)} new candidate(s)")
-        summary = await _process(cfg, store, candidates)
+        summary = _process(cfg, store, candidates)
     finally:
         store.close()
 
@@ -111,4 +107,4 @@ async def run() -> None:
 
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    run()

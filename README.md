@@ -5,8 +5,9 @@ relevant to Scott Technology Group (STG), scores them for relevance, and drafts
 reply comments **in David Scott's voice** into a review queue. A human reviews
 the queue and posts manually.
 
-**It never posts.** There is no Reddit-write code anywhere in this project, and
-the Agent SDK runs with no tools (`allowed_tools=[]`). Every output is a draft.
+**It never posts.** There is no Reddit-write code anywhere in this project; PRAW
+runs read-only and the model calls are plain text-in/JSON-out with no tools.
+Every output is a draft.
 
 ---
 
@@ -14,7 +15,7 @@ the Agent SDK runs with no tools (`allowed_tools=[]`). Every output is a draft.
 
 ```
 ingest_reddit.py   →   agent.py            →   store.py        →   main.py
-(PRAW, read-only)      (Claude Agent SDK)      (SQLite/Supabase)    (report)
+(PRAW, read-only)      (Anthropic SDK)         (SQLite/Supabase)    (report)
 
 new posts + top-level   1. score relevance      queue kept           run summary:
 comments + keyword         (cheap: Haiku)        opportunities,       seen / kept /
@@ -30,8 +31,9 @@ reliable. The pipeline is idempotent: each source ID is marked seen once
 processed, so the same thread is never drafted twice.
 
 Voice rules live in [`voice-profile.md`](voice-profile.md) and are loaded fresh
-every run. Operating guardrails live in [`CLAUDE.md`](CLAUDE.md), loaded by the
-SDK via `setting_sources=["project"]`. Edit either without touching code.
+into the drafting prompt every run — edit it without touching code. The
+operating guardrails and JSON contract in [`CLAUDE.md`](CLAUDE.md) are mirrored
+in the drafting/scoring system prompts in `agent.py`.
 
 ---
 
@@ -47,7 +49,7 @@ CLAUDE.md            agent guardrails + output contract
 src/
   main.py            orchestrates ingest -> score/draft -> queue -> report
   ingest_reddit.py   PRAW; new items since last run; dedup-aware
-  agent.py           Agent SDK: relevance scoring + voice drafting (JSON out)
+  agent.py           Anthropic SDK: relevance scoring + voice drafting (JSON out)
   store.py           SQLite (default) or Supabase; seen-sources + opportunities
   config.py          loads config.yaml + .env
 migrations/
@@ -68,10 +70,9 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-> **Note on the Agent SDK:** `claude-agent-sdk` drives the Claude Code engine. If
-> a run fails to start the engine, install the CLI it wraps:
-> `npm install -g @anthropic-ai/claude-code` (needs Node.js 18+). On most setups
-> `pip install claude-agent-sdk` is all you need.
+> **Pure Python.** Scoring and drafting use the standard Anthropic SDK
+> (`anthropic`) — plain single-shot model calls, no tools, no agent loop. There
+> is no Node.js / CLI runtime to install.
 
 ### 2. Create a Reddit "script" app (free)
 
@@ -137,8 +138,8 @@ Each run prints a summary and appends to `runs.log`, e.g.:
 2026-06-27T20:03:11+00:00  run done | seen=42 scored=42 kept=3 drafts=3 total_cost_usd=0.0184
 ```
 
-`total_cost_usd` comes straight from the Agent SDK `ResultMessage.total_cost_usd`
-of every model call, summed for the run.
+`total_cost_usd` is computed from each call's token usage against a price table
+in `agent.py` (update it if Anthropic prices change), summed for the run.
 
 ---
 
@@ -207,7 +208,7 @@ Everything tunable lives in `config.yaml`:
 ## Design notes
 
 - **Read-only by construction.** No posting tool, no Reddit write path, PRAW
-  forced to `read_only = True`, Agent SDK `allowed_tools=[]`. Posting is a
+  forced to `read_only = True`, model calls have no tools. Posting is a
   deliberate human step.
 - **Twitter/X is out of scope for v1** (live monitoring needs the paid X API).
   The ingest layer is built behind a `fetch_candidates(cfg, store)` interface, so

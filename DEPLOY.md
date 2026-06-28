@@ -35,16 +35,9 @@ install directory to wherever those jobs live.
 ### 2a. Prerequisites
 
 ```bash
-# Python 3.10+ and git (probably already present)
+# Python 3.10+ and git. That's the whole runtime — no Node, no CLI.
 python3 --version          # must be >= 3.10
 sudo apt-get update && sudo apt-get install -y python3-venv git
-
-# Node 18+ and the Claude Code CLI. The Agent SDK shells out to this CLI.
-# (Skip if Node 18+ is already installed.)
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-sudo npm install -g @anthropic-ai/claude-code
-which claude                # confirm it's on PATH
 ```
 
 ### 2b. Clone and install
@@ -94,13 +87,10 @@ You should see `store=Supabase` in the first log line, an "ingested N
 candidate(s)" line, and a `run done | ... total_cost_usd=...` summary. Check the
 `content_opportunities` table in Supabase for any rows with `status=pending`.
 
-If the run errors trying to start the engine, the Claude Code CLI isn't on PATH —
-recheck `which claude` and step 2a.
-
 ### 2e. Schedule it (every 4 hours)
 
-A wrapper script, [`scripts/run.sh`](scripts/run.sh), cds into the project, uses
-the venv, and keeps Node/`claude` on PATH under cron. Add to crontab:
+A wrapper script, [`scripts/run.sh`](scripts/run.sh), cds into the project and
+uses the venv. Add to crontab:
 
 ```bash
 crontab -e
@@ -111,11 +101,6 @@ crontab -e
 ```
 
 (Adjust both paths to your install directory.)
-
-> **PATH note:** if you installed Node via `nvm` instead of NodeSource, cron
-> won't find `claude`. Add the nvm bin dir to the `export PATH=...` line in
-> `scripts/run.sh` (there's a commented example in the file), or install the CLI
-> system-wide as in step 2a.
 
 That's it. The agent now wakes every 4 hours, scores new Reddit threads, drafts
 the good ones into Supabase, and exits.
@@ -153,7 +138,7 @@ Posting is always a deliberate human step — the agent has no Reddit-write path
 If the Scott Technology server is Windows rather than Linux:
 
 ```powershell
-# After installing Python 3.10+ and Node 18+ (with: npm install -g @anthropic-ai/claude-code)
+# After installing Python 3.10+ (no Node needed). git is already present.
 cd C:\apps
 git clone https://github.com/davidgscott/social-media-scanner.git
 cd social-media-scanner
