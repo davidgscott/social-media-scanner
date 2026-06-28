@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>STG Draft Assistant — David's voice</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1a1a1a; --muted:#666; --line:#e3e3e0;
+          --accent:#1f6feb; --accent2:#0b8a5b; --warn:#b25000; --danger:#b00020; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 18px 64px; }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 18px; font-size: 13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+          padding:16px; margin-bottom:16px; }
+  label { display:block; font-weight:600; font-size:13px; margin:0 0 6px; }
+  input[type=text], input[type=password], select, textarea {
+    width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px;
+    font: inherit; background:#fff; color:var(--ink); }
+  textarea { resize: vertical; min-height: 160px; }
+  .row { display:flex; gap:12px; flex-wrap:wrap; }
+  .row > div { flex:1 1 180px; }
+  .muted { color: var(--muted); font-size:12px; }
+  button { cursor:pointer; border:0; border-radius:8px; padding:10px 16px;
+           font:inherit; font-weight:600; }
+  .primary { background:var(--accent); color:#fff; }
+  .primary:disabled { opacity:.55; cursor:default; }
+  .ghost { background:#eee; color:#222; }
+  .topbar { display:flex; gap:10px; align-items:flex-end; }
+  .badges { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 10px; }
+  .badge { font-size:12px; font-weight:600; padding:3px 9px; border-radius:999px;
+           border:1px solid var(--line); background:#fafafa; }
+  .risk-low { color:var(--accent2); border-color:#bfe6d4; background:#eefaf3; }
+  .risk-medium { color:var(--warn); border-color:#f3d9bf; background:#fdf3e8; }
+  .risk-high { color:var(--danger); border-color:#f3bfc7; background:#fdecef; }
+  .draftbox { white-space:pre-wrap; background:#fbfbfa; border:1px solid var(--line);
+              border-radius:8px; padding:14px; min-height:60px; }
+  .notes { margin-top:10px; font-size:13px; color:var(--muted); }
+  .status { font-size:13px; margin-top:8px; min-height:18px; }
+  .err { color: var(--danger); }
+  .hide { display:none; }
+  .keyline { display:flex; gap:8px; align-items:center; }
+  .keyline input { flex:1; }
+  footer { color:var(--muted); font-size:12px; margin-top:24px; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>STG Draft Assistant</h1>
+  <p class="sub">Paste a thread, post, or question. Get a reply drafted in David's
+     voice to review and post manually. Read-only — this never posts anywhere.</p>
+
+  <!-- API key -->
+  <div class="card">
+    <label for="apikey">Anthropic API key</label>
+    <div class="keyline">
+      <input id="apikey" type="password" placeholder="sk-ant-..." autocomplete="off" />
+      <button class="ghost" id="savekey" type="button">Save</button>
+      <button class="ghost" id="clearkey" type="button">Clear</button>
+    </div>
+    <p class="muted" id="keystatus" style="margin:8px 0 0;">
+      Stored only in this browser (localStorage), sent only to Anthropic. Personal
+      use — don't host this file on a public URL.</p>
+  </div>
+
+  <!-- Input -->
+  <div class="card">
+    <div class="row" style="margin-bottom:12px;">
+      <div>
+        <label for="platform">Platform</label>
+        <select id="platform">
+          <option value="reddit">Reddit</option>
+          <option value="linkedin">LinkedIn</option>
+          <option value="quora">Quora</option>
+          <option value="x">X / Twitter</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div>
+        <label for="model">Model</label>
+        <select id="model">
+          <option value="claude-opus-4-8">Opus 4.8 (best voice)</option>
+          <option value="claude-sonnet-4-6">Sonnet 4.6 (cheaper)</option>
+          <option value="claude-haiku-4-5">Haiku 4.5 (cheapest)</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-bottom:12px;">
+      <label for="context">Context for the reviewer model (optional)</label>
+      <input id="context" type="text"
+             placeholder="e.g. asked by an IT director; this is a top comment, not the post" />
+    </div>
+    <label for="content">Post / thread / question</label>
+    <textarea id="content" placeholder="Paste the content you want to respond to..."></textarea>
+    <div class="topbar" style="margin-top:12px;">
+      <button class="primary" id="go" type="button">Generate draft</button>
+      <span class="status" id="status"></span>
+    </div>
+  </div>
+
+  <!-- Output -->
+  <div class="card hide" id="output">
+    <div class="badges" id="badges"></div>
+    <label>Draft <span class="muted">(review before posting)</span></label>
+    <div class="draftbox" id="draft"></div>
+    <div style="margin-top:10px; display:flex; gap:10px; align-items:center;">
+      <button class="ghost" id="copy" type="button">Copy draft</button>
+      <span class="status" id="copied"></span>
+    </div>
+    <div class="notes hide" id="notesline"></div>
+  </div>
+
+  <footer>
+    Guardrails: leads with usefulness, never names STG unless explicitly asked, no
+    hashtags / em-dashes / hype. Posting is always a manual human step.
+  </footer>
+</div>
+
+<!-- Voice profile embedded as plain text (no escaping headaches) -->
+<script type="text/plain" id="voice-profile">
+# Voice Profile — David Scott (master)
+
+## 1. The core voice
+Plain, declarative, first-person operator's English. State a thing flatly as fact,
+then back it with concrete specifics. Move: claim -> sharper counter-claim -> a
+stack of concrete, real-world reasons. Specifics, not adjectives.
+
+Five defining traits:
+1. Declarative confidence. Short sentences as fact. Chops with periods, not commas.
+2. The reframe — recasts the other person's framing: "It's not X. It's Y."
+3. Concrete over abstract. Operator's nouns, real numbers, lived experience.
+4. Conversational, warm, sometimes blunt.
+5. Earned enthusiasm (real, never manufactured hype).
+
+## 2. Mechanical fingerprints
+First person, heavy "I." Period-chopped rhythm; short declaratives stacked. Do NOT
+sprinkle em-dashes (an AI tell, not his habit). Emphasis via ALL CAPS on one punch
+word, not bold. Sparing emoji, never decoration. Reddit register is calmer than X:
+more genuine questions, fuller reasoning, paragraph breaks when earned.
+
+## 3. Few-shot anchors
+Expertise/B2B (target): "Cloud fax is not just a replacement for analog lines. It is
+a stronger workflow than scan to email. Verified delivery, centralized audit logs,
+controlled routing, and number continuity make it operationally and compliantly
+superior."
+Helpful/lived-in: "Yes, I had a 2017 Camry SE with 105k miles and got rear-ended,
+same exact damage. They totaled it. Got $14,500 (only paid $18,000 new, so it was a
+win)."
+Reframe: "Dave's game isn't financial optimization. It's financial peace."
+
+## 4. Channel tuning
+- Reddit: keep the helpful, lived-experience opener and expertise-with-specifics
+  core. Calmer than X — dial down exclamation, ALL CAPS, emoji. Lead with the useful
+  thing in the first sentence. No hashtags, no CTA, no link unless asked. Fuller
+  paragraphs fine when the answer needs it.
+- X / Twitter: first person, a little enthusiasm, occasional emoji, punchy, informal.
+- LinkedIn / longer-form: keep the voice but a notch more polished and professional;
+  expertise-forward, first person, still plain and specific. No hashtag stacks, no
+  corporate filler.
+- Quora / Q&A: a fuller, well-structured, teaching answer; still plain, declarative,
+  one concrete specific over three adjectives.
+
+## 5. Hard fences — never imitate
+- 2022 crypto-hype register: hashtag stacks, "to the moon", "this gem", manufactured
+  urgency, hype-as-substance.
+- Generic AI / corporate tells: em-dash sprinkling, tidy three-part parallelism,
+  "in today's fast-paced world", "leverage", "synergy", "robust solution", "delve",
+  "moreover", "it's worth noting". Long, smooth, even paragraphs. Over-polishing — a
+  slightly rough, plain comment is more him than a buffed one.
+
+## 6. One-line summary
+Write as a plain-spoken, confident operator in the first person. Open with the
+useful, lived-in thing. State it as fact, then back it with concrete specifics.
+Reframe lazy framings. Chop sentences short. Warm and direct. No hype, no hashtags,
+no em-dashes, no corporate filler. Lead with help; never mention the company unless
+asked.
+</script>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var KEY = "stg_draft_assistant_api_key";
+
+  // --- API key persistence ---
+  var saved = localStorage.getItem(KEY) || "";
+  if (saved) { $("apikey").value = saved; $("keystatus").textContent = "Key loaded from this browser."; }
+  $("savekey").onclick = function () {
+    var v = $("apikey").value.trim();
+    if (!v) { $("keystatus").textContent = "Nothing to save."; return; }
+    localStorage.setItem(KEY, v);
+    $("keystatus").textContent = "Saved to this browser.";
+  };
+  $("clearkey").onclick = function () {
+    localStorage.removeItem(KEY); $("apikey").value = "";
+    $("keystatus").textContent = "Cleared from this browser.";
+  };
+
+  var INSTRUCTIONS =
+    "You are drafting a reply in David Scott's voice for a HUMAN to review and post " +
+    "manually. David runs a managed-print / office-technology business, but this draft " +
+    "must lead with genuine helpfulness, not marketing.\n\n" +
+    "A human hand-picked the item below from the named platform, so produce a usable " +
+    "draft unless replying would require breaking a rule.\n\n" +
+    "Rules:\n" +
+    "- Follow the voice profile above exactly, and match the register to the platform " +
+    "using the profile's Channel tuning section (reddit: calm, lead with the useful " +
+    "thing, dial down exclamation/emoji; linkedin: professional but plain-spoken first " +
+    "person, a notch more polished; quora: a fuller, well-structured teaching answer; " +
+    "x: punchy and short; other: plain helpful first-person operator voice).\n" +
+    "- No em-dashes, no hashtags, no corporate filler, no hype/FOMO register.\n" +
+    "- NEVER mention Scott Technology Group / STG, its products, its site, or any link, " +
+    "UNLESS the item explicitly asks for a vendor or recommendation. If it does, set " +
+    "selfpromo_risk to \"high\" and explain in notes.\n" +
+    "- If you genuinely have nothing useful and honest to say, return an empty draft " +
+    "and say why in notes. Silence is a valid answer.\n\n" +
+    "Output ONLY a single JSON object, no preamble, no markdown fences:\n" +
+    "{\"relevance\": \"<one sentence: how well this fits David's print/office-tech " +
+    "expertise>\", \"selfpromo_risk\": \"low|medium|high\", \"draft\": \"<the reply in " +
+    "David's voice, or empty string>\", \"notes\": \"<anything the reviewer should " +
+    "know, or empty string>\"}";
+
+  function extractJson(text) {
+    text = (text || "").trim();
+    try { return JSON.parse(text); } catch (e) {}
+    var s = text.indexOf("{"), e2 = text.lastIndexOf("}");
+    if (s !== -1 && e2 !== -1 && e2 > s) {
+      try { return JSON.parse(text.slice(s, e2 + 1)); } catch (e) {}
+    }
+    return null;
+  }
+
+  function setStatus(msg, isErr) {
+    var el = $("status"); el.textContent = msg;
+    el.className = "status" + (isErr ? " err" : "");
+  }
+
+  $("go").onclick = function () {
+    var key = $("apikey").value.trim();
+    var content = $("content").value.trim();
+    var platform = $("platform").value;
+    var model = $("model").value;
+    var context = $("context").value.trim();
+
+    if (!key) { setStatus("Enter your Anthropic API key first.", true); return; }
+    if (!content) { setStatus("Paste something to respond to first.", true); return; }
+
+    var voice = $("voice-profile").textContent;
+    var system = "# VOICE PROFILE (single source of truth - follow exactly)\n\n" +
+                 voice + "\n\n# TASK\n" + INSTRUCTIONS;
+    var userPrompt = "Platform: " + platform + "\n" +
+      (context ? "Reviewer context: " + context + "\n" : "") +
+      "\nContent to respond to:\n" + content +
+      "\n\nReturn ONLY the JSON object described in the task.";
+
+    $("go").disabled = true;
+    setStatus("Drafting in David's voice...", false);
+    $("output").classList.add("hide");
+    $("copied").textContent = "";
+
+    fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true"
+      },
+      body: JSON.stringify({
+        model: model,
+        max_tokens: 1500,
+        system: system,
+        messages: [{ role: "user", content: userPrompt }]
+      })
+    })
+    .then(function (r) {
+      return r.json().then(function (data) { return { ok: r.ok, status: r.status, data: data }; });
+    })
+    .then(function (res) {
+      $("go").disabled = false;
+      if (!res.ok) {
+        var m = (res.data && res.data.error && res.data.error.message) || ("HTTP " + res.status);
+        setStatus("API error: " + m, true);
+        return;
+      }
+      var blocks = res.data.content || [];
+      var text = "";
+      for (var i = 0; i < blocks.length; i++) {
+        if (blocks[i].type === "text") { text = blocks[i].text; break; }
+      }
+      var parsed = extractJson(text);
+      if (!parsed) {
+        setStatus("Couldn't parse the model output. Raw text below.", true);
+        parsed = { relevance: "", selfpromo_risk: "", draft: text, notes: "" };
+      } else {
+        setStatus("Done.", false);
+      }
+      render(parsed, platform);
+    })
+    .catch(function (err) {
+      $("go").disabled = false;
+      setStatus("Network error: " + err.message +
+        " (check the key and your connection; the key must be allowed to call the API)", true);
+    });
+  };
+
+  function render(p, platform) {
+    var badges = $("badges");
+    badges.innerHTML = "";
+    var pf = document.createElement("span");
+    pf.className = "badge"; pf.textContent = platform;
+    badges.appendChild(pf);
+    if (p.selfpromo_risk) {
+      var risk = String(p.selfpromo_risk).toLowerCase();
+      var rb = document.createElement("span");
+      rb.className = "badge risk-" + (["low","medium","high"].indexOf(risk) >= 0 ? risk : "low");
+      rb.textContent = "self-promo: " + risk;
+      badges.appendChild(rb);
+    }
+    if (p.relevance) {
+      var rel = document.createElement("span");
+      rel.className = "badge"; rel.textContent = "fit: " + p.relevance;
+      badges.appendChild(rel);
+    }
+    var draft = (p.draft || "").trim();
+    $("draft").textContent = draft || "(empty draft — see notes)";
+    var notes = (p.notes || "").trim();
+    if (notes) { $("notesline").textContent = "Reviewer notes: " + notes; $("notesline").classList.remove("hide"); }
+    else { $("notesline").classList.add("hide"); }
+    $("output").classList.remove("hide");
+  }
+
+  $("copy").onclick = function () {
+    var t = $("draft").textContent;
+    navigator.clipboard.writeText(t).then(function () {
+      $("copied").textContent = "Copied.";
+      setTimeout(function () { $("copied").textContent = ""; }, 1500);
+    }, function () {
+      $("copied").textContent = "Copy failed — select and copy manually.";
+    });
+  };
+})();
+</script>
+</body>
+</html>
