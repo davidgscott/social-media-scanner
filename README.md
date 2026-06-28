@@ -141,6 +141,25 @@ Each run prints a summary and appends to `runs.log`, e.g.:
 `total_cost_usd` is computed from each call's token usage against a price table
 in `agent.py` (update it if Anthropic prices change), summed for the run.
 
+### Validate without Reddit (while Data API access is pending)
+
+Reddit now gates Data API credentials behind an approval process (see
+[`docs/reddit-api-application.md`](docs/reddit-api-application.md)). You can still
+prove the whole scoring → drafting → store path end to end with no Reddit creds:
+
+```bash
+python scripts/mock_run.py        # Windows: C:\Agents\python\python.exe scripts\mock_run.py
+```
+
+It runs three canned, Reddit-style threads (a clear fit, a borderline one, an
+off-topic one) through the real Anthropic API and writes the drafted ones to your
+store tagged `source='mock'`. Needs only `ANTHROPIC_API_KEY` (plus Supabase
+vars if you want it in Supabase; otherwise SQLite). Clean up after with
+`DELETE FROM content_opportunities WHERE source = 'mock';`.
+
+Reddit credentials are only required for the live `src/main.py` ingest — the app
+loads and the mock test runs fine before they exist.
+
 ---
 
 ## Schedule it (run without your PC on)

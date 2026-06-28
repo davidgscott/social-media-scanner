@@ -56,5 +56,7 @@ models:
   drafting: claude-opus-4-8
 
 # --- Reddit client ---
+# Reddit requires this exact user-agent shape: <platform>:<app id>:<version> (by /u/<username>)
+# Replace CHANGE_ME with your Reddit username before going live.
 reddit:
-  user_agent: "stg-content-monitor/1.0 (read-only; by u/CHANGE_ME)"
+  user_agent: "windows:stg-content-monitor:1.0 (by /u/CHANGE_ME)"

@@ -48,6 +48,13 @@ def make_reddit(cfg: Config) -> praw.Reddit:
     password are supplied we use them, but we still force read_only mode so the
     agent can never write.
     """
+    if not (cfg.reddit_client_id and cfg.reddit_client_secret):
+        raise SystemExit(
+            "Reddit API credentials are not set. Add REDDIT_CLIENT_ID and "
+            "REDDIT_CLIENT_SECRET to .env once Reddit grants Data API access. "
+            "(Scoring/drafting and scripts/mock_run.py work without them.)"
+        )
+
     kwargs = dict(
         client_id=cfg.reddit_client_id,
         client_secret=cfg.reddit_client_secret,

@@ -94,8 +94,11 @@ def load_config(config_path: Path | None = None) -> Config:
         scoring_model=str(models.get("scoring", "claude-haiku-4-5")),
         drafting_model=str(models.get("drafting", "claude-opus-4-8")),
         reddit_user_agent=str(reddit.get("user_agent", "stg-content-monitor/1.0")),
-        reddit_client_id=_require("REDDIT_CLIENT_ID"),
-        reddit_client_secret=_require("REDDIT_CLIENT_SECRET"),
+        # Reddit creds are validated at ingest time (see ingest_reddit.make_reddit),
+        # not here — so scoring/drafting and the mock test can run before Reddit
+        # API access is granted.
+        reddit_client_id=os.environ.get("REDDIT_CLIENT_ID", "").strip(),
+        reddit_client_secret=os.environ.get("REDDIT_CLIENT_SECRET", "").strip(),
         reddit_username=os.environ.get("REDDIT_USERNAME", "").strip(),
         reddit_password=os.environ.get("REDDIT_PASSWORD", "").strip(),
         anthropic_api_key=_require("ANTHROPIC_API_KEY"),
