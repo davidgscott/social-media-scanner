@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>STG — Morning List</title>
+<style>
+  :root { --bg:#f7f7f5; --card:#fff; --ink:#1a1a1a; --muted:#666; --line:#e3e3e0;
+          --accent:#1f6feb; --accent2:#0b8a5b; --warn:#b25000; --danger:#b00020; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:15px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 22px 18px 64px; }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { color: var(--muted); margin: 0 0 16px; font-size: 13px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:10px;
+          padding:16px; margin-bottom:14px; }
+  label { display:block; font-weight:600; font-size:13px; margin:0 0 6px; }
+  input[type=text], input[type=password], select {
+    width:100%; padding:9px 10px; border:1px solid var(--line); border-radius:8px;
+    font: inherit; background:#fff; color:var(--ink); }
+  .row { display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end; }
+  .row > div { flex:1 1 220px; }
+  .muted { color: var(--muted); font-size:12px; }
+  button { cursor:pointer; border:0; border-radius:8px; padding:9px 14px;
+           font:inherit; font-weight:600; }
+  .primary { background:var(--accent); color:#fff; }
+  .ghost { background:#eee; color:#222; }
+  .ok { background:var(--accent2); color:#fff; }
+  .danger-btn { background:#f3e3e6; color:var(--danger); }
+  .badges { display:flex; gap:8px; flex-wrap:wrap; margin:0 0 8px; align-items:center; }
+  .badge { font-size:12px; font-weight:600; padding:3px 9px; border-radius:999px;
+           border:1px solid var(--line); background:#fafafa; }
+  .score { background:#eef3fe; border-color:#cfe0fb; color:var(--accent); }
+  .risk-low { color:var(--accent2); border-color:#bfe6d4; background:#eefaf3; }
+  .risk-medium { color:var(--warn); border-color:#f3d9bf; background:#fdf3e8; }
+  .risk-high { color:var(--danger); border-color:#f3bfc7; background:#fdecef; }
+  .rationale { font-size:13px; color:#333; margin:0 0 10px; }
+  .draftbox { white-space:pre-wrap; background:#fbfbfa; border:1px solid var(--line);
+              border-radius:8px; padding:13px; font-size:14px; }
+  .notes { margin-top:9px; font-size:12.5px; color:var(--muted); }
+  .actions { display:flex; gap:8px; align-items:center; margin-top:11px; flex-wrap:wrap; }
+  .actions a { text-decoration:none; }
+  .status { font-size:13px; min-height:18px; }
+  .err { color: var(--danger); }
+  .hide { display:none; }
+  .toolbar { display:flex; gap:10px; align-items:center; margin:4px 0 14px; flex-wrap:wrap; }
+  .count { font-weight:600; }
+  .empty { color:var(--muted); padding:30px; text-align:center; }
+  a.link { color: var(--accent); }
+  .fade { opacity:.4; transition:opacity .3s; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>STG — Morning List</h1>
+  <p class="sub">Your ranked Reddit opportunities with drafts. Review, copy, post
+     manually, then mark done. Nothing here posts anything for you.</p>
+
+  <!-- Connection -->
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="url">Supabase project URL</label>
+        <input id="url" type="text" placeholder="https://xxxx.supabase.co" autocomplete="off" />
+      </div>
+      <div>
+        <label for="key">Supabase publishable key</label>
+        <input id="key" type="password" placeholder="sb_publishable_..." autocomplete="off" />
+      </div>
+      <div style="flex:0 0 auto;">
+        <button class="ghost" id="save" type="button">Save</button>
+      </div>
+    </div>
+    <p class="muted" id="connstatus" style="margin:8px 0 0;">
+      Stored only in this browser. Use the <b>publishable</b> key (Settings → API).</p>
+  </div>
+
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <button class="primary" id="load" type="button">Load list</button>
+    <select id="filter" style="width:auto;">
+      <option value="pending">Pending</option>
+      <option value="posted">Posted</option>
+      <option value="discarded">Dismissed</option>
+      <option value="all">All</option>
+    </select>
+    <span class="count" id="count"></span>
+    <span class="status" id="status"></span>
+  </div>
+
+  <div id="list"></div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var LS_URL = "stg_dash_url", LS_KEY = "stg_dash_key";
+
+  $("url").value = localStorage.getItem(LS_URL) || "";
+  $("key").value = localStorage.getItem(LS_KEY) || "";
+  if ($("url").value && $("key").value) $("connstatus").textContent = "Connection loaded from this browser.";
+
+  $("save").onclick = function () {
+    localStorage.setItem(LS_URL, $("url").value.trim().replace(/\/+$/, ""));
+    localStorage.setItem(LS_KEY, $("key").value.trim());
+    $("connstatus").textContent = "Saved to this browser.";
+  };
+
+  function base() { return ($("url").value.trim().replace(/\/+$/, "")); }
+  function headers() {
+    var k = $("key").value.trim();
+    return { apikey: k, Authorization: "Bearer " + k, "Content-Type": "application/json" };
+  }
+  function setStatus(msg, isErr) {
+    var el = $("status"); el.textContent = msg; el.className = "status" + (isErr ? " err" : "");
+  }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>]/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c];
+    });
+  }
+
+  function riskClass(r) {
+    r = String(r || "").toLowerCase();
+    return "risk-" + (["low", "medium", "high"].indexOf(r) >= 0 ? r : "low");
+  }
+
+  function load() {
+    if (!base() || !$("key").value.trim()) { setStatus("Enter your Supabase URL and key, then Save.", true); return; }
+    var filter = $("filter").value;
+    var q = "select=*&order=relevance_score.desc,captured_at.desc";
+    if (filter !== "all") q += "&status=eq." + filter;
+
+    setStatus("Loading…", false);
+    fetch(base() + "/rest/v1/content_opportunities?" + q, { headers: headers() })
+      .then(function (r) {
+        return r.text().then(function (t) {
+          if (!r.ok) throw new Error("HTTP " + r.status + ": " + t.slice(0, 200));
+          return JSON.parse(t);
+        });
+      })
+      .then(function (rows) {
+        render(rows);
+        setStatus("");
+        $("count").textContent = rows.length + " " + filter + (rows.length === 1 ? " item" : " items");
+      })
+      .catch(function (e) {
+        setStatus("Error: " + e.message + " (check URL/key; the publishable key needs read access)", true);
+      });
+  }
+
+  function render(rows) {
+    var list = $("list");
+    list.innerHTML = "";
+    if (!rows.length) {
+      list.innerHTML = '<div class="empty">Nothing here. When the overnight job finds opportunities, they show up ranked at the top.</div>';
+      return;
+    }
+    rows.forEach(function (row) {
+      var card = document.createElement("div");
+      card.className = "card";
+      var notes = (row.notes_for_reviewer || "").trim();
+      card.innerHTML =
+        '<div class="badges">' +
+          '<span class="badge score">score ' + esc(row.relevance_score) + '</span>' +
+          '<span class="badge ' + riskClass(row.selfpromo_risk) + '">self-promo: ' + esc(row.selfpromo_risk) + '</span>' +
+          '<span class="badge">r/' + esc(row.subreddit) + '</span>' +
+          '<span class="badge">' + esc(row.status) + '</span>' +
+        '</div>' +
+        '<p class="rationale">' + esc(row.rationale) + '</p>' +
+        '<div class="draftbox">' + esc((row.draft_comment || "").trim() || "(no draft)") + '</div>' +
+        (notes ? '<div class="notes">Reviewer notes: ' + esc(notes) + '</div>' : '') +
+        '<div class="actions">' +
+          '<button class="ghost btn-copy" type="button">Copy draft</button>' +
+          '<a class="link" href="' + esc(row.permalink) + '" target="_blank" rel="noopener">Open post ↗</a>' +
+          '<span style="flex:1"></span>' +
+          '<button class="ok btn-posted" type="button">Mark posted</button>' +
+          '<button class="danger-btn btn-dismiss" type="button">Dismiss</button>' +
+          '<span class="status btn-msg"></span>' +
+        '</div>';
+
+      var draft = (row.draft_comment || "").trim();
+      card.querySelector(".btn-copy").onclick = function () {
+        var msg = card.querySelector(".btn-msg");
+        navigator.clipboard.writeText(draft).then(
+          function () { msg.textContent = "Copied."; setTimeout(function(){ msg.textContent=""; }, 1500); },
+          function () { msg.textContent = "Copy failed — select manually."; }
+        );
+      };
+      card.querySelector(".btn-posted").onclick = function () { updateStatus(card, row.id, "posted"); };
+      card.querySelector(".btn-dismiss").onclick = function () { updateStatus(card, row.id, "discarded"); };
+      list.appendChild(card);
+    });
+  }
+
+  function updateStatus(card, id, status) {
+    var msg = card.querySelector(".btn-msg");
+    msg.textContent = "Saving…";
+    fetch(base() + "/rest/v1/content_opportunities?id=eq." + encodeURIComponent(id), {
+      method: "PATCH",
+      headers: Object.assign({ Prefer: "return=minimal" }, headers()),
+      body: JSON.stringify({ status: status }),
+    })
+      .then(function (r) {
+        if (!r.ok) return r.text().then(function (t) { throw new Error("HTTP " + r.status + ": " + t.slice(0,160)); });
+        // If we're viewing pending, the row no longer belongs — fade it out.
+        if ($("filter").value === "pending" || $("filter").value === status) {
+          card.classList.add("fade");
+          setTimeout(function () { card.remove(); }, 320);
+        } else {
+          card.querySelector(".badge:nth-child(4)").textContent = status;
+          msg.textContent = "Updated.";
+        }
+      })
+      .catch(function (e) { msg.textContent = "Error: " + e.message; });
+  }
+
+  $("load").onclick = load;
+  $("filter").onchange = load;
+})();
+</script>
+</body>
+</html>
