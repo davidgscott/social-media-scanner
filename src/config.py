@@ -43,6 +43,13 @@ class Config:
     reddit_username: str
     reddit_password: str
 
+    # Email ingest (F5Bot alerts via IMAP)
+    imap_host: str
+    imap_folder: str
+    f5bot_sender: str
+    imap_user: str
+    imap_password: str
+
     # Anthropic
     anthropic_api_key: str
 
@@ -79,6 +86,7 @@ def load_config(config_path: Path | None = None) -> Config:
         raw: dict[str, Any] = yaml.safe_load(fh) or {}
 
     models = raw.get("models", {})
+    email_cfg = raw.get("email", {})
     reddit = raw.get("reddit", {})
 
     return Config(
@@ -101,6 +109,12 @@ def load_config(config_path: Path | None = None) -> Config:
         reddit_client_secret=os.environ.get("REDDIT_CLIENT_SECRET", "").strip(),
         reddit_username=os.environ.get("REDDIT_USERNAME", "").strip(),
         reddit_password=os.environ.get("REDDIT_PASSWORD", "").strip(),
+        # Email ingest (host/folder/sender are non-secret config; creds in .env).
+        imap_host=str(email_cfg.get("imap_host", "imap.gmail.com")),
+        imap_folder=str(email_cfg.get("imap_folder", "INBOX")),
+        f5bot_sender=str(email_cfg.get("f5bot_sender", "admin@f5bot.com")),
+        imap_user=os.environ.get("IMAP_USER", "").strip(),
+        imap_password=os.environ.get("IMAP_PASSWORD", "").strip(),
         anthropic_api_key=_require("ANTHROPIC_API_KEY"),
         supabase_url=os.environ.get("SUPABASE_URL", "").strip(),
         supabase_key=os.environ.get("SUPABASE_KEY", "").strip(),

@@ -60,3 +60,12 @@ models:
 # Replace CHANGE_ME with your Reddit username before going live.
 reddit:
   user_agent: "windows:stg-content-monitor:1.0 (by /u/CHANGE_ME)"
+
+# --- Email ingest (F5Bot alerts via IMAP) ---
+# The automated path: F5Bot delivers alerts to a dedicated mailbox, and the
+# scheduled job reads them here. Credentials (IMAP_USER / IMAP_PASSWORD) live in
+# .env. Defaults target Gmail; change imap_host for another provider.
+email:
+  imap_host: imap.gmail.com
+  imap_folder: INBOX
+  f5bot_sender: admin@f5bot.com
