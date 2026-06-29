@@ -47,6 +47,7 @@ class Config:
     imap_host: str
     imap_folder: str
     f5bot_sender: str
+    imap_lookback_days: int
     imap_user: str
     imap_password: str
 
@@ -113,6 +114,7 @@ def load_config(config_path: Path | None = None) -> Config:
         imap_host=str(email_cfg.get("imap_host", "imap.gmail.com")),
         imap_folder=str(email_cfg.get("imap_folder", "INBOX")),
         f5bot_sender=str(email_cfg.get("f5bot_sender", "admin@f5bot.com")),
+        imap_lookback_days=int(email_cfg.get("lookback_days", 7)),
         imap_user=os.environ.get("IMAP_USER", "").strip(),
         imap_password=os.environ.get("IMAP_PASSWORD", "").strip(),
         anthropic_api_key=_require("ANTHROPIC_API_KEY"),

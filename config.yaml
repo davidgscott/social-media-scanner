@@ -69,3 +69,7 @@ email:
   imap_host: imap.gmail.com
   imap_folder: INBOX
   f5bot_sender: admin@f5bot.com
+  # Re-scan F5Bot emails from the last N days every run. Dedup is by Reddit
+  # thread id (seen_sources), so re-scanning is free and read/unread state is
+  # ignored entirely. 7 days comfortably covers any gap between runs.
+  lookback_days: 7

@@ -16,7 +16,7 @@ from __future__ import annotations
 import email
 import imaplib
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.message import Message
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -140,11 +140,14 @@ def _html_from_message(msg: Message) -> str:
 
 
 def fetch_candidates(cfg: Config, store) -> list[Candidate]:
-    """Read unseen F5Bot alerts over IMAP and return new, deduped candidates.
+    """Read recent F5Bot alerts over IMAP and return new, deduped candidates.
 
-    Emails are marked \\Seen after processing so re-runs don't reprocess them;
-    Reddit-hit dedup against the seen-store is the real guarantee against
-    re-drafting the same thread.
+    Read-only on the mailbox: it fetches all F5Bot emails from the last
+    `imap_lookback_days` regardless of read/unread state and never changes any
+    flag. Dedup is purely by Reddit thread id against the seen-store, so opening
+    or reading an alert in the inbox can never cause it to be skipped, and
+    re-scanning already-processed emails is free (already-seen hits are filtered
+    out before any model call).
     """
     if not (cfg.imap_user and cfg.imap_password):
         raise SystemExit(
@@ -154,19 +157,23 @@ def fetch_candidates(cfg: Config, store) -> list[Candidate]:
 
     candidates: list[Candidate] = []
     in_run: set[str] = set()
+    since = (
+        datetime.now(timezone.utc) - timedelta(days=cfg.imap_lookback_days)
+    ).strftime("%d-%b-%Y")
 
     conn = imaplib.IMAP4_SSL(cfg.imap_host)
     try:
         conn.login(cfg.imap_user, cfg.imap_password)
         conn.select(cfg.imap_folder)
-        # Unseen messages from F5Bot only.
-        typ, data = conn.search(None, "UNSEEN", "FROM", f'"{cfg.f5bot_sender}"')
+        # All F5Bot mail in the lookback window, read or unread. Dedup happens
+        # against the seen-store, not the IMAP read flag.
+        typ, data = conn.search(None, "FROM", f'"{cfg.f5bot_sender}"', "SINCE", since)
         if typ != "OK":
             return candidates
         msg_nums = data[0].split()
 
         for num in msg_nums:
-            typ, msg_data = conn.fetch(num, "(RFC822)")
+            typ, msg_data = conn.fetch(num, "(BODY.PEEK[])")  # PEEK = don't set \Seen
             if typ != "OK" or not msg_data or not msg_data[0]:
                 continue
             msg = email.message_from_bytes(msg_data[0][1])
@@ -181,9 +188,6 @@ def fetch_candidates(cfg: Config, store) -> list[Candidate]:
                     continue
                 in_run.add(sid)
                 candidates.append(cand)
-
-            # Mark the email read so we don't reprocess it next run.
-            conn.store(num, "+FLAGS", "\\Seen")
     finally:
         try:
             conn.close()
