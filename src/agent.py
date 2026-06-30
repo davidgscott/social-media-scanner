@@ -21,6 +21,7 @@ review.
 
 from __future__ import annotations
 
+import difflib
 import json
 from dataclasses import dataclass
 
@@ -220,20 +221,102 @@ def _voice_examples_block(examples: list[str] | None) -> str:
     )
 
 
+def _word_diff(draft_text: str, posted_text: str) -> str:
+    """Inline word-level diff of a draft vs. what David actually posted.
+
+    [- x] = he removed x, [+ y] = he added y, [- x -> + y] = he replaced x with
+    y. Long unchanged runs are elided so the model's eye lands on the edits.
+    """
+    a = (draft_text or "").split()
+    b = (posted_text or "").split()
+    out: list[str] = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(
+        a=a, b=b, autojunk=False
+    ).get_opcodes():
+        if tag == "equal":
+            words = a[i1:i2]
+            if len(words) > 6:
+                seg = " ".join(words[:3] + ["..."] + words[-3:])
+            else:
+                seg = " ".join(words)
+            if seg:
+                out.append(seg)
+        elif tag == "replace":
+            out.append(f"[- {' '.join(a[i1:i2])} -> + {' '.join(b[j1:j2])}]")
+        elif tag == "delete":
+            out.append(f"[- {' '.join(a[i1:i2])}]")
+        elif tag == "insert":
+            out.append(f"[+ {' '.join(b[j1:j2])}]")
+    return " ".join(out)
+
+
+def _edit_contrast_block(pairs: list[tuple[str, str]] | None) -> str:
+    """Live negative/positive signal: what David removed, added, or replaced in
+    recent drafts. Sits nearest the task so the most concrete corrections are
+    freshest in the model's mind."""
+    pairs = [
+        (d, p)
+        for (d, p) in (pairs or [])
+        if d and p and d.strip() and p.strip() and d.strip() != p.strip()
+    ]
+    if not pairs:
+        return ""
+    blocks = []
+    for i, (d, p) in enumerate(pairs, 1):
+        diff = _word_diff(d, p)
+        if diff:
+            blocks.append(f"--- Edit {i} ---\n{diff}")
+    if not blocks:
+        return ""
+    return (
+        "\n\n# WHAT DAVID CHANGES IN DRAFTS (learn from his edits)\n"
+        "These are recent drafts the model wrote and the edits David made before "
+        "posting. [- ...] is text he removed, [+ ...] is text he added, "
+        "[- x -> + y] is a replacement. Treat these as corrections: do NOT "
+        "reintroduce wording he removed (e.g. an abbreviation he expands, a "
+        "phrasing he cuts), and prefer his replacements. Edits that repeat across "
+        "examples are the strongest signal.\n\n" + "\n\n".join(blocks)
+    )
+
+
+def _corrections_block(cfg: Config) -> str:
+    """David's reviewed, hand-editable corrections list (voice-corrections.md),
+    distilled from his edits by analyze_edits.py. Curated, so it ranks just
+    under the voice profile and above the raw examples."""
+    try:
+        text = cfg.voice_corrections_path.read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, OSError):
+        return ""
+    if not text:
+        return ""
+    return (
+        "\n\n# LEARNED CORRECTIONS (David reviewed these — follow them)\n"
+        "Concrete rules distilled from David's own edits and approved by him. "
+        "They refine the voice profile; honor them.\n\n" + text
+    )
+
+
 def draft(
-    candidate: Candidate, cfg: Config, voice_examples: list[str] | None = None
+    candidate: Candidate,
+    cfg: Config,
+    voice_examples: list[str] | None = None,
+    edit_pairs: list[tuple[str, str]] | None = None,
 ) -> tuple[dict, float]:
     """Voice-drafting pass. Returns (parsed_json, cost_usd).
 
     Loads voice-profile.md fresh each call so edits take effect with no code
-    change, and injects David's recent actually-posted comments as live few-shot
-    examples (the voice feedback loop).
+    change, and layers the voice feedback loop on top:
+      - voice_examples: David's recent posted comments (positive few-shot)
+      - voice-corrections.md: his reviewed, distilled edit rules
+      - edit_pairs: recent draft->posted diffs (live contrast signal)
     """
     voice_profile = cfg.voice_profile_path.read_text(encoding="utf-8")
     system_prompt = (
         "# VOICE PROFILE (single source of truth — follow exactly)\n\n"
         + voice_profile
+        + _corrections_block(cfg)
         + _voice_examples_block(voice_examples)
+        + _edit_contrast_block(edit_pairs)
         + "\n\n# DRAFTING TASK\n\n"
         + _DRAFTING_INSTRUCTIONS
     )
@@ -260,12 +343,16 @@ def _clamp_score(value) -> int:
 
 
 def evaluate(
-    candidate: Candidate, cfg: Config, voice_examples: list[str] | None = None
+    candidate: Candidate,
+    cfg: Config,
+    voice_examples: list[str] | None = None,
+    edit_pairs: list[tuple[str, str]] | None = None,
 ) -> Evaluation:
     """Full pipeline for one candidate: score, then draft if it clears the bar.
 
-    voice_examples (David's recent posted comments) are passed through to the
-    drafting step as live few-shot anchors.
+    voice_examples (David's recent posted comments) and edit_pairs (recent
+    draft->posted diffs) are passed through to the drafting step as live voice
+    anchors.
     """
     score_json, score_cost = score(candidate, cfg)
 
@@ -278,7 +365,7 @@ def evaluate(
     draft_cost = 0.0
 
     if relevance >= cfg.relevance_threshold:
-        draft_json, draft_cost = draft(candidate, cfg, voice_examples)
+        draft_json, draft_cost = draft(candidate, cfg, voice_examples, edit_pairs)
         draft_comment = str(draft_json.get("draft_comment", "")).strip()
         notes = str(draft_json.get("notes_for_reviewer", "")).strip()
 

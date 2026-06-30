@@ -43,10 +43,21 @@ def _process(cfg: Config, store: Store, candidates: list[Candidate]) -> dict:
     if voice_examples:
         print(f"  using {len(voice_examples)} recent posted comment(s) as voice examples")
 
+    # And his recent draft->posted edits, so the model learns what he removes,
+    # replaces, and adds (the contrast signal).
+    edit_pairs = []
+    if cfg.voice_edit_example_count > 0:
+        try:
+            edit_pairs = store.recent_edit_pairs(cfg.voice_edit_example_count)
+        except Exception as exc:
+            print(f"  [warn] could not load edit pairs: {exc}")
+    if edit_pairs:
+        print(f"  using {len(edit_pairs)} recent draft->posted edit(s) as contrast")
+
     for candidate in candidates:
         seen += 1
         try:
-            evaluation = agent.evaluate(candidate, cfg, voice_examples)
+            evaluation = agent.evaluate(candidate, cfg, voice_examples, edit_pairs)
         except Exception as exc:
             print(f"  [warn] evaluate failed for {candidate.source_id}: {exc}")
             # Don't mark seen — let a future run retry this candidate.

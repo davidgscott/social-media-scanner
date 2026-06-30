@@ -43,6 +43,11 @@ max_drafts_per_run: 10
 # to feed the drafting model as live examples. 0 disables. Grows the voice match
 # as he posts more. Set to 0 until there are a few real posts banked.
 voice_example_count: 6
+# How many recent draft->posted edits to feed the model as a contrast signal,
+# so it learns what David removes/replaces (e.g. "cart" -> "cartridge"). 0
+# disables. These are the surgical, word-level corrections; complements the
+# distilled rules in voice-corrections.md (run: python src/analyze_edits.py).
+voice_edit_example_count: 4
 
 # --- Ingestion limits (PRAW; keep modest to respect Reddit rate limits) ---
 max_posts_per_subreddit: 25

@@ -26,6 +26,7 @@ class Store(Protocol):
     def mark_seen(self, source_id: str) -> None: ...
     def add_opportunity(self, record: dict) -> None: ...
     def recent_posted(self, limit: int) -> list[str]: ...
+    def recent_edit_pairs(self, limit: int) -> list[tuple[str, str]]: ...
     def close(self) -> None: ...
 
 
@@ -123,6 +124,19 @@ class SQLiteStore:
         )
         return [r[0] for r in cur.fetchall()]
 
+    def recent_edit_pairs(self, limit: int) -> list[tuple[str, str]]:
+        cur = self.conn.execute(
+            """
+            SELECT draft_comment, posted_comment FROM content_opportunities
+            WHERE posted_comment IS NOT NULL AND TRIM(posted_comment) != ''
+              AND draft_comment  IS NOT NULL AND TRIM(draft_comment)  != ''
+              AND TRIM(posted_comment) != TRIM(draft_comment)
+            ORDER BY id DESC LIMIT ?
+            """,
+            (limit,),
+        )
+        return [(r[0], r[1]) for r in cur.fetchall()]
+
     def close(self) -> None:
         self.conn.close()
 
@@ -185,6 +199,28 @@ class SupabaseStore:
             .execute()
         )
         return [r["posted_comment"] for r in (resp.data or []) if r.get("posted_comment")]
+
+    def recent_edit_pairs(self, limit: int) -> list[tuple[str, str]]:
+        # PostgREST can't compare two columns server-side, so over-fetch recent
+        # posted rows and keep the ones where David actually changed the draft.
+        resp = (
+            self.client.table("content_opportunities")
+            .select("draft_comment, posted_comment")
+            .neq("posted_comment", "")
+            .not_.is_("posted_comment", "null")
+            .order("id", desc=True)
+            .limit(max(limit * 4, limit))
+            .execute()
+        )
+        pairs: list[tuple[str, str]] = []
+        for r in resp.data or []:
+            draft = (r.get("draft_comment") or "").strip()
+            posted = (r.get("posted_comment") or "").strip()
+            if draft and posted and draft != posted:
+                pairs.append((r["draft_comment"], r["posted_comment"]))
+            if len(pairs) >= limit:
+                break
+        return pairs
 
     def close(self) -> None:  # supabase client needs no explicit close
         pass

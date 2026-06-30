@@ -36,6 +36,7 @@ class Config:
     scoring_model: str
     drafting_model: str
     voice_example_count: int  # recent posted comments injected as live few-shot
+    voice_edit_example_count: int  # recent draft->posted edits injected as contrast
 
     # Reddit
     reddit_user_agent: str
@@ -62,6 +63,9 @@ class Config:
     # Paths
     root: Path = ROOT
     voice_profile_path: Path = field(default_factory=lambda: ROOT / "voice-profile.md")
+    voice_corrections_path: Path = field(
+        default_factory=lambda: ROOT / "voice-corrections.md"
+    )
     sqlite_path: Path = field(default_factory=lambda: ROOT / "stg_monitor.db")
     log_path: Path = field(default_factory=lambda: ROOT / "runs.log")
 
@@ -102,6 +106,7 @@ def load_config(config_path: Path | None = None) -> Config:
         relevance_threshold=int(raw.get("relevance_threshold", 60)),
         max_drafts_per_run=int(raw.get("max_drafts_per_run", 10)),
         voice_example_count=int(raw.get("voice_example_count", 6)),
+        voice_edit_example_count=int(raw.get("voice_edit_example_count", 4)),
         scoring_model=str(models.get("scoring", "claude-haiku-4-5")),
         drafting_model=str(models.get("drafting", "claude-opus-4-8")),
         reddit_user_agent=str(reddit.get("user_agent", "stg-content-monitor/1.0")),
