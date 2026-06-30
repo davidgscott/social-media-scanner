@@ -7,6 +7,9 @@
 *.sqlite3
 runs.log
 
+# Machine-generated voice corrections (regenerated on the server from real edits)
+voice-corrections.md
+
 # Python
 __pycache__/
 *.py[cod]

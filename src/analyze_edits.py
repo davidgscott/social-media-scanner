@@ -4,15 +4,19 @@ This is the "zero in on what I dislike" pass. It reads recent
 (draft_comment, posted_comment) pairs from the store, shows the model exactly
 what David changed, and asks it to extract concrete, recurring edit rules — the
 abbreviations he expands, the phrasings he cuts, the openers he deletes. It
-writes them to voice-corrections.md for David to read and edit.
+writes them to voice-corrections.md, which the drafting prompt injects right
+under the voice profile (see agent._corrections_block) so future drafts stop
+making the same mistakes.
 
-That file is then injected into the drafting prompt (see agent._corrections_block)
-right under the voice profile, so future drafts stop making the same mistakes.
+Designed to run unattended (e.g. a weekly Task Scheduler / cron job). To make
+that safe, voice-corrections.md has two zones:
 
-Human-in-the-loop by design: the model proposes rules, David keeps the veto.
-Nothing here posts, and nothing overrides voice-profile.md — corrections only
-refine it. Run it once you have a handful of edits banked (10-15 is plenty);
-before that there is no pattern to find.
+  * MY RULES (top)        — authoritative, hand-edited by David, NEVER overwritten.
+  * AUTO-DISTILLED (below)— regenerated on every run from the latest edits.
+
+The run reads David's own rules and tells the model not to repeat or contradict
+them, so his vetoes and additions stick. Human keeps the veto; nothing here
+posts, and nothing overrides voice-profile.md — corrections only refine it.
 
 Run:  python src/analyze_edits.py [max_pairs]   (default 60)
 """
@@ -27,6 +31,20 @@ from config import Config, load_config
 from store import open_store
 
 _DEFAULT_MAX_PAIRS = 60
+
+# Everything below this marker is machine-owned and rewritten each run. Anything
+# above it (David's own rules) is preserved verbatim.
+_MARKER = (
+    "<!-- ===== AUTO-DISTILLED BELOW: regenerated automatically each run. "
+    "Edits below this line are overwritten; put rules you want to keep above it. "
+    "===== -->"
+)
+
+_HUMAN_HEADER = "## My rules (authoritative — edit freely; never overwritten)"
+_HUMAN_PLACEHOLDER = (
+    "- (Add your own voice rules here. Anything in this section stays put and is "
+    "never overwritten by the weekly job.)"
+)
 
 _SYSTEM = """You analyze how David edits AI-drafted Reddit replies before he
 posts them. Your job is to find the RECURRING, CONCRETE changes he makes, so a
@@ -65,6 +83,34 @@ def _format_pairs(pairs: list[tuple[str, str]]) -> str:
     return "\n\n".join(blocks)
 
 
+def _read_human_section(cfg: Config) -> str:
+    """Return the human-owned top of voice-corrections.md (everything above the
+    auto-distilled marker), or a fresh placeholder section if the file is new."""
+    try:
+        existing = cfg.voice_corrections_path.read_text(encoding="utf-8")
+    except (FileNotFoundError, OSError):
+        existing = ""
+    if _MARKER in existing:
+        return existing.split(_MARKER, 1)[0].rstrip() + "\n"
+    if existing.strip():
+        # Older / hand-made file with no marker: keep all of it as David's, so we
+        # never destroy hand-written content. The marker gets added below it.
+        return existing.rstrip() + "\n"
+    # Brand new file.
+    return f"# Voice corrections\n\n{_HUMAN_HEADER}\n{_HUMAN_PLACEHOLDER}\n"
+
+
+def _human_rules_text(human_section: str) -> str:
+    """Just the bullet lines from David's section, for feeding the model so it
+    doesn't duplicate or contradict rules he already maintains."""
+    lines = []
+    for line in human_section.splitlines():
+        s = line.strip()
+        if s.startswith(("-", "*")) and _HUMAN_PLACEHOLDER not in line:
+            lines.append(s)
+    return "\n".join(lines)
+
+
 def run(max_pairs: int = _DEFAULT_MAX_PAIRS) -> None:
     cfg = load_config()
     store = open_store(cfg)
@@ -76,20 +122,28 @@ def run(max_pairs: int = _DEFAULT_MAX_PAIRS) -> None:
     if not pairs:
         print(
             "No edited drafts found yet. Edit a few drafts in the dashboard and "
-            "click 'Mark posted' first, then run this again."
+            "click 'Mark posted' first, then run this again. Left "
+            f"{cfg.voice_corrections_path.name} untouched."
         )
         return
 
     print(f"Analyzing {len(pairs)} draft->posted edit(s)...")
     diffs = _format_pairs(pairs)
     if not diffs.strip():
-        print("The edits had no word-level changes to learn from.")
+        print("The edits had no word-level changes to learn from. Nothing written.")
         return
 
-    prompt = (
-        "Here are David's recent edits to AI-drafted replies. Extract the "
-        "recurring corrections as instructed.\n\n" + diffs
-    )
+    human_section = _read_human_section(cfg)
+    already = _human_rules_text(human_section)
+
+    prompt = "Here are David's recent edits to AI-drafted replies.\n\n" + diffs
+    if already:
+        prompt += (
+            "\n\nDavid already maintains the rules below. Do NOT repeat or "
+            "contradict them — only surface NEW patterns from the edits:\n" + already
+        )
+    prompt += "\n\nExtract the recurring corrections as instructed."
+
     text, cost = agent._run_model(
         cfg=cfg,
         model=cfg.drafting_model,
@@ -99,22 +153,24 @@ def run(max_pairs: int = _DEFAULT_MAX_PAIRS) -> None:
     )
     rules = (text or "").strip()
     if not rules:
-        print("The model returned no rules. Nothing written.")
+        print("The model returned no rules. Left the existing file untouched.")
         return
 
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    header = (
-        f"_Generated {stamp} from {len(pairs)} of David's edits. Review and edit "
-        "freely — the drafting model follows this list verbatim, under the voice "
-        "profile. Delete anything wrong; add your own rules anytime._\n\n"
+    auto_section = (
+        f"{_MARKER}\n\n## Auto-distilled from my recent edits\n"
+        f"_Generated {stamp} from {len(pairs)} edit(s). Move any keeper up into "
+        "'My rules' so it survives the next run._\n\n" + rules + "\n"
     )
-    cfg.voice_corrections_path.write_text(header + rules + "\n", encoding="utf-8")
+    cfg.voice_corrections_path.write_text(
+        human_section.rstrip() + "\n\n" + auto_section, encoding="utf-8"
+    )
 
     print(f"\nWrote {cfg.voice_corrections_path.name} (analysis cost ${cost:.4f}):\n")
     print(rules)
     print(
-        f"\nReview {cfg.voice_corrections_path.name} and edit as needed. It feeds "
-        "the next drafting run automatically."
+        f"\nIt feeds the next drafting run automatically. Your 'My rules' section "
+        "at the top is never overwritten — move any auto rule up there to keep it."
     )
 
 

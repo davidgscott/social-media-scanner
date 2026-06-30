@@ -105,6 +105,20 @@ crontab -e
 That's it. The agent now wakes every 4 hours, scores new Reddit threads, drafts
 the good ones into Supabase, and exits.
 
+### 2f. Schedule the weekly voice distiller (Friday)
+
+Once you're posting and editing drafts, a second job learns from your edits. It
+reads your recent draft->posted changes and regenerates the auto-distilled half
+of `voice-corrections.md`, which feeds the next drafts. Your hand-written "My
+rules" section at the top of that file is never overwritten.
+
+```cron
+0 7 * * 5 /opt/social-media-scanner/scripts/run_analyze.sh >> /opt/social-media-scanner/runs.log 2>&1
+```
+
+(7am every Friday — an hour after the ingest run, so the file is fresh for your
+Friday review. It quietly no-ops until you've banked some edits.)
+
 ---
 
 ## Reviewing the queue
@@ -157,3 +171,19 @@ schtasks /Create /TN "STG Content Monitor" /SC HOURLY /MO 4 ^
   /TR "C:\apps\social-media-scanner\.venv\Scripts\python.exe C:\apps\social-media-scanner\src\main.py" ^
   /RL LIMITED /F
 ```
+
+### Weekly voice distiller (Friday)
+
+The same learning job as the Linux `2f` step. First, open
+[`scripts\run_analyze.bat`](scripts/run_analyze.bat) and set `PYTHON=` to the
+same python.exe the nightly task uses (run
+`schtasks /Query /TN "STG Content Monitor" /V /FO LIST` to copy it). Then create
+the weekly task (one line — no `^` continuation, safe to paste in PowerShell):
+
+```powershell
+schtasks /Create /TN "STG Voice Distiller" /SC WEEKLY /D FRI /ST 07:00 /TR "C:\apps\social-media-scanner\scripts\run_analyze.bat" /RL LIMITED /F
+```
+
+Adjust the `.bat` path to your install directory. It runs every Friday at 7am,
+regenerates the auto half of `voice-corrections.md`, and no-ops quietly until
+you've banked some edits.
