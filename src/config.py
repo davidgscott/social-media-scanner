@@ -35,6 +35,7 @@ class Config:
     max_drafts_per_run: int
     scoring_model: str
     drafting_model: str
+    voice_example_count: int  # recent posted comments injected as live few-shot
 
     # Reddit
     reddit_user_agent: str
@@ -100,6 +101,7 @@ def load_config(config_path: Path | None = None) -> Config:
         max_keyword_results_per_query=int(raw.get("max_keyword_results_per_query", 10)),
         relevance_threshold=int(raw.get("relevance_threshold", 60)),
         max_drafts_per_run=int(raw.get("max_drafts_per_run", 10)),
+        voice_example_count=int(raw.get("voice_example_count", 6)),
         scoring_model=str(models.get("scoring", "claude-haiku-4-5")),
         drafting_model=str(models.get("drafting", "claude-opus-4-8")),
         reddit_user_agent=str(reddit.get("user_agent", "stg-content-monitor/1.0")),

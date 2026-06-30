@@ -25,6 +25,7 @@ class Store(Protocol):
     def is_seen(self, source_id: str) -> bool: ...
     def mark_seen(self, source_id: str) -> None: ...
     def add_opportunity(self, record: dict) -> None: ...
+    def recent_posted(self, limit: int) -> list[str]: ...
     def close(self) -> None: ...
 
 
@@ -50,6 +51,7 @@ class SQLiteStore:
                 rationale          TEXT,
                 selfpromo_risk     TEXT NOT NULL DEFAULT 'low',
                 draft_comment      TEXT,
+                posted_comment     TEXT,
                 notes_for_reviewer TEXT,
                 status             TEXT NOT NULL DEFAULT 'pending',
                 UNIQUE (source, source_id)
@@ -65,6 +67,11 @@ class SQLiteStore:
             );
             """
         )
+        # Add posted_comment to pre-existing local DBs (no IF NOT EXISTS in older SQLite).
+        try:
+            self.conn.execute("ALTER TABLE content_opportunities ADD COLUMN posted_comment TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists
         self.conn.commit()
 
     def is_seen(self, source_id: str) -> bool:
@@ -104,6 +111,17 @@ class SQLiteStore:
             ),
         )
         self.conn.commit()
+
+    def recent_posted(self, limit: int) -> list[str]:
+        cur = self.conn.execute(
+            """
+            SELECT posted_comment FROM content_opportunities
+            WHERE posted_comment IS NOT NULL AND TRIM(posted_comment) != ''
+            ORDER BY id DESC LIMIT ?
+            """,
+            (limit,),
+        )
+        return [r[0] for r in cur.fetchall()]
 
     def close(self) -> None:
         self.conn.close()
@@ -155,6 +173,18 @@ class SupabaseStore:
         self.client.table("content_opportunities").upsert(
             row, on_conflict="source,source_id"
         ).execute()
+
+    def recent_posted(self, limit: int) -> list[str]:
+        resp = (
+            self.client.table("content_opportunities")
+            .select("posted_comment")
+            .neq("posted_comment", "")
+            .not_.is_("posted_comment", "null")
+            .order("id", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return [r["posted_comment"] for r in (resp.data or []) if r.get("posted_comment")]
 
     def close(self) -> None:  # supabase client needs no explicit close
         pass

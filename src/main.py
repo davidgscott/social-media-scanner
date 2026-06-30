@@ -32,10 +32,21 @@ def _process(cfg: Config, store: Store, candidates: list[Candidate]) -> dict:
     drafts = 0
     total_cost = 0.0
 
+    # Voice feedback loop: pull David's most-recent actually-posted comments once
+    # and feed them to the drafting model as live examples.
+    voice_examples = []
+    if cfg.voice_example_count > 0:
+        try:
+            voice_examples = store.recent_posted(cfg.voice_example_count)
+        except Exception as exc:
+            print(f"  [warn] could not load voice examples: {exc}")
+    if voice_examples:
+        print(f"  using {len(voice_examples)} recent posted comment(s) as voice examples")
+
     for candidate in candidates:
         seen += 1
         try:
-            evaluation = agent.evaluate(candidate, cfg)
+            evaluation = agent.evaluate(candidate, cfg, voice_examples)
         except Exception as exc:
             print(f"  [warn] evaluate failed for {candidate.source_id}: {exc}")
             # Don't mark seen — let a future run retry this candidate.

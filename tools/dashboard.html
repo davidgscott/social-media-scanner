@@ -38,6 +38,10 @@
   .rationale { font-size:13px; color:#333; margin:0 0 10px; }
   .draftbox { white-space:pre-wrap; background:#fbfbfa; border:1px solid var(--line);
               border-radius:8px; padding:13px; font-size:14px; }
+  .draftedit { width:100%; min-height:150px; resize:vertical; background:#fbfbfa;
+               border:1px solid var(--line); border-radius:8px; padding:13px;
+               font:inherit; font-size:14px; color:var(--ink); }
+  .edithint { font-size:12px; color:var(--muted); margin:0 0 5px; }
   .notes { margin-top:9px; font-size:12.5px; color:var(--muted); }
   .actions { display:flex; gap:8px; align-items:center; margin-top:11px; flex-wrap:wrap; }
   .actions a { text-decoration:none; }
@@ -170,7 +174,8 @@
           '<span class="badge">' + esc(row.status) + '</span>' +
         '</div>' +
         '<p class="rationale">' + esc(row.rationale) + '</p>' +
-        '<div class="draftbox">' + esc((row.draft_comment || "").trim() || "(no draft)") + '</div>' +
+        '<p class="edithint">Draft — <b>edit it here to sound like you</b> before posting; your final version is saved and trains the voice.</p>' +
+        '<textarea class="draftedit">' + esc((row.draft_comment || "").trim()) + '</textarea>' +
         (notes ? '<div class="notes">Reviewer notes: ' + esc(notes) + '</div>' : '') +
         '<div class="actions">' +
           '<button class="ghost btn-copy" type="button">Copy draft</button>' +
@@ -181,27 +186,30 @@
           '<span class="status btn-msg"></span>' +
         '</div>';
 
-      var draft = (row.draft_comment || "").trim();
+      var ta = card.querySelector(".draftedit");
       card.querySelector(".btn-copy").onclick = function () {
         var msg = card.querySelector(".btn-msg");
-        navigator.clipboard.writeText(draft).then(
-          function () { msg.textContent = "Copied."; setTimeout(function(){ msg.textContent=""; }, 1500); },
+        navigator.clipboard.writeText(ta.value).then(
+          function () { msg.textContent = "Copied your edited version."; setTimeout(function(){ msg.textContent=""; }, 1800); },
           function () { msg.textContent = "Copy failed — select manually."; }
         );
       };
-      card.querySelector(".btn-posted").onclick = function () { updateStatus(card, row.id, "posted"); };
+      // "Mark posted" saves the EDITED text as posted_comment — that's the voice signal.
+      card.querySelector(".btn-posted").onclick = function () {
+        updateStatus(card, row.id, "posted", { posted_comment: ta.value });
+      };
       card.querySelector(".btn-dismiss").onclick = function () { updateStatus(card, row.id, "discarded"); };
       list.appendChild(card);
     });
   }
 
-  function updateStatus(card, id, status) {
+  function updateStatus(card, id, status, extra) {
     var msg = card.querySelector(".btn-msg");
     msg.textContent = "Saving…";
     fetch(base() + "/rest/v1/content_opportunities?id=eq." + encodeURIComponent(id), {
       method: "PATCH",
       headers: Object.assign({ Prefer: "return=minimal" }, headers()),
-      body: JSON.stringify({ status: status }),
+      body: JSON.stringify(Object.assign({ status: status }, extra || {})),
     })
       .then(function (r) {
         if (!r.ok) return r.text().then(function (t) { throw new Error("HTTP " + r.status + ": " + t.slice(0,160)); });

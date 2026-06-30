@@ -202,16 +202,38 @@ def score(candidate: Candidate, cfg: Config) -> tuple[dict, float]:
     return _extract_json(text), cost
 
 
-def draft(candidate: Candidate, cfg: Config) -> tuple[dict, float]:
+def _voice_examples_block(examples: list[str] | None) -> str:
+    """Live few-shot: David's most-recent actually-posted comments. These are the
+    strongest signal for his current voice, so they sit right before the task."""
+    examples = [e.strip() for e in (examples or []) if e and e.strip()]
+    if not examples:
+        return ""
+    blocks = []
+    for i, ex in enumerate(examples, 1):
+        blocks.append(f"--- Example {i} (David posted this) ---\n{ex}")
+    return (
+        "\n\n# HOW DAVID ACTUALLY WRITES (recent replies he published)\n"
+        "These are real comments David recently posted, after his own edits. They "
+        "are the strongest, most current signal for his voice — match their rhythm, "
+        "length, sentence shape, and word choice over any generic guidance above.\n\n"
+        + "\n\n".join(blocks)
+    )
+
+
+def draft(
+    candidate: Candidate, cfg: Config, voice_examples: list[str] | None = None
+) -> tuple[dict, float]:
     """Voice-drafting pass. Returns (parsed_json, cost_usd).
 
     Loads voice-profile.md fresh each call so edits take effect with no code
-    change.
+    change, and injects David's recent actually-posted comments as live few-shot
+    examples (the voice feedback loop).
     """
     voice_profile = cfg.voice_profile_path.read_text(encoding="utf-8")
     system_prompt = (
         "# VOICE PROFILE (single source of truth — follow exactly)\n\n"
         + voice_profile
+        + _voice_examples_block(voice_examples)
         + "\n\n# DRAFTING TASK\n\n"
         + _DRAFTING_INSTRUCTIONS
     )
@@ -237,8 +259,14 @@ def _clamp_score(value) -> int:
     return max(0, min(100, n))
 
 
-def evaluate(candidate: Candidate, cfg: Config) -> Evaluation:
-    """Full pipeline for one candidate: score, then draft if it clears the bar."""
+def evaluate(
+    candidate: Candidate, cfg: Config, voice_examples: list[str] | None = None
+) -> Evaluation:
+    """Full pipeline for one candidate: score, then draft if it clears the bar.
+
+    voice_examples (David's recent posted comments) are passed through to the
+    drafting step as live few-shot anchors.
+    """
     score_json, score_cost = score(candidate, cfg)
 
     relevance = _clamp_score(score_json.get("relevance_score", 0))
@@ -250,7 +278,7 @@ def evaluate(candidate: Candidate, cfg: Config) -> Evaluation:
     draft_cost = 0.0
 
     if relevance >= cfg.relevance_threshold:
-        draft_json, draft_cost = draft(candidate, cfg)
+        draft_json, draft_cost = draft(candidate, cfg, voice_examples)
         draft_comment = str(draft_json.get("draft_comment", "")).strip()
         notes = str(draft_json.get("notes_for_reviewer", "")).strip()
 
